@@ -95,6 +95,7 @@ def run_row(query_row):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--df_path", default="../tag_queries.csv", type=str)
+    parser.add_argument("--llm", default='gpt-4o-mini', type=str)
     parser.add_argument("--output_dir", default='output_text2sql_lm/', type=str)
     return parser.parse_args()
 
@@ -105,7 +106,7 @@ if __name__ == "__main__":
 
     queries_df = pd.read_csv(args.df_path)
     lm = OpenAIModel(
-        model="gpt-4o-mini",
+        model=args.llm,
         api_base="https://api.openai.com/v1/",
         provider="openai",
         max_tokens=512,
