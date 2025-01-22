@@ -95,12 +95,14 @@ def run_row(query_row):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--df_path", default="../tag_queries.csv", type=str)
-    parser.add_argument("--output_dir", type=str)
+    parser.add_argument("--output_dir", default='output_text2sql_lm/', type=str)
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
+    print(args)
+
     queries_df = pd.read_csv(args.df_path)
     lm = OpenAIModel(
         model="gpt-4o-mini",
