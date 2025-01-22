@@ -6,12 +6,15 @@ import sqlite3
 import time
 
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import as_completed
 from lotus.models import OpenAIModel
 
 from tag.utils import row_to_str
 
 
 def run_row(query_row):
+    t0 = time.time()
     text2sql_prompt = query_row["naivetag_text2sql_prompt"]
     question = query_row["Query"]
     db_name = query_row["DB used"]
@@ -42,7 +45,7 @@ def run_row(query_row):
         user_instruction = ""
 
         for i, row in enumerate(row_dicts):
-            user_instruction += f"Data Point {i+1}\n{row_to_str(row)}\n\n"
+            user_instruction += f"Data Point {i + 1}\n{row_to_str(row)}\n\n"
 
         user_instruction += f"Question: {question}"
         system_instruction = (
@@ -60,6 +63,7 @@ def run_row(query_row):
                 "prediction": "None",
                 "answer": answer,
                 "sql_statement": last_sql_statement,
+                "latency": time.time() - t0,
             }
 
         prediction = lm(messages)[0]
@@ -77,12 +81,14 @@ def run_row(query_row):
             "prediction": prediction,
             "answer": answer,
             "sql_statement": last_sql_statement,
+            "latency": time.time() - t0,
         }
 
     except Exception as e:
         return {
             "error": f"Error running SQL statement: {last_sql_statement}\n{e}",
             "query_id": query_row["Query ID"],
+            "latency": time.time() - t0,
         }
 
 
@@ -106,13 +112,11 @@ if __name__ == "__main__":
     if args.output_dir:
         os.makedirs(args.output_dir, exist_ok=True)
 
-    for _, query_row in queries_df.iterrows():
-        tic = time.time()
-        output = run_row(query_row)
-        latency = time.time() - tic
-
-        output["latency"] = latency
-        print(output)
-        if args.output_dir:
-            with open(os.path.join(args.output_dir, f"query_{query_row['Query ID']}.json"), "w+") as f:
-                json.dump(output, f)
+    with ThreadPoolExecutor() as executor:
+        futures = {executor.submit(run_row, row): row for _, row in queries_df.iterrows()}
+        for future in as_completed(futures):
+            result = future.result()
+            print(result)
+            if args.output_dir:
+                with open(os.path.join(args.output_dir, f"query_{result['query_id']}.json"), "w+") as f:
+                    json.dump(result, f)
