@@ -97,9 +97,9 @@ if __name__ == "__main__":
     args = parse_args()
     queries_df = pd.read_csv(args.df_path)
     lm = OpenAIModel(
-        model="meta-llama/Meta-Llama-3.1-70B-Instruct",
-        api_base="http://localhost:8000/v1",
-        provider="vllm",
+        model="gpt-4o-mini",
+        api_base="https://api.openai.com/v1/",
+        provider="openai",
         max_tokens=512,
     )
 
