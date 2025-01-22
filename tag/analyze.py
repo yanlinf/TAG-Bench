@@ -43,6 +43,17 @@ def eval(args):
         print(f"Mean latency: {np.mean(v):.2f}")
         print(f"Avg. correct: {np.mean(corrects[k]):.2f}")
 
+    group_corrects = []
+    for k in 'Overall	Match	Comparison	Ranking	Aggregation	Knowledge	Reasoning'.split('\t'):
+        print(k)
+        if k == 'Overall':
+            correct = np.mean([v for k, vs in corrects.items() for v in vs if k != 'Aggregation'])
+        else:
+            correct = np.mean(corrects[k])
+        group_corrects.append(correct)
+    print('\t'.join([f'{k:.2f}' for k in group_corrects]))
+
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
