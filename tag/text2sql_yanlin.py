@@ -8,9 +8,12 @@ import time
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import as_completed
+from collections import defaultdict
+import numpy as np
+
 from lotus.models import OpenAIModel
 
-from tag.utils import row_to_str
+from tag.utils import row_to_str, eval
 
 ANSWER_GEN_PROMPT = """
 Answer the question based on the SQL execution results.
@@ -48,6 +51,7 @@ def run_row(query_row):
         conn = sqlite3.connect(f"../dev_folder/dev_databases/{db_name}/{db_name}.sqlite")
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
+        assert last_sql_statement.lower().startswith("select"), "Only SELECT queries are supported"
         cursor.execute(last_sql_statement)
         raw_results = cursor.fetchall()
         row_dicts = []
@@ -115,7 +119,8 @@ if __name__ == "__main__":
         model=args.llm,
         api_base="https://api.openai.com/v1/",
         provider="openai",
-        max_tokens=512,
+        max_tokens=8192,
+        temperature=0.0,
     )
 
     if args.output_dir:
@@ -129,9 +134,11 @@ if __name__ == "__main__":
             print(result)
             all_outputs.append(result)
             if args.output_dir:
-                with open(os.path.join(args.output_dir, f"query_{result['query_id']}.json"), "w+") as f:
+                with open(os.path.join(args.output_dir, f"query_{result['query_id']}.json"), "w") as f:
                     json.dump(result, f)
 
     all_outputs.sort(key=lambda x: int(x["query_id"]))
     with open(os.path.join(args.output_dir, f"all_outputs.json"), "w") as f:
         json.dump(all_outputs, f, indent=2)
+
+    eval(queries_df, args.output_dir)
