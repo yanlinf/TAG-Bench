@@ -1,6 +1,61 @@
 import heapq
-
 import pandas as pd
+import numpy as np
+import json
+from collections import defaultdict
+
+
+def is_equal(pred, ans):
+    if isinstance(ans, list):
+        return isinstance(pred, list) and sorted(pred) == sorted(ans)
+    return str(pred) == str(ans)
+
+
+def eval(df, output_dir):
+    grouped = df.groupby("Query type")
+    latencies = defaultdict(list)
+    corrects = defaultdict(list)
+    for group_name, group_df in grouped:
+        for _, row in group_df.iterrows():
+            qid = row["Query ID"]
+
+            with open(f"{output_dir}/query_{qid}.json") as f:
+                data = json.load(f)
+                latencies[group_name].append(data["latency"])
+                if data.get("error", None):
+                    corrects[group_name].append(False)
+                else:
+                    # corrects[group_name].append(data["prediction"] == data["answer"])
+                    corrects[group_name].append(is_equal(data["prediction"], data["answer"]))
+
+    kr_grouped = df.groupby("Knowledge/Reasoning Type")
+    for group_name, group_df in kr_grouped:
+        for _, row in group_df.iterrows():
+            qid = row["Query ID"]
+            if row["Query type"] != "Aggregation":
+                with open(f"{output_dir}/query_{qid}.json") as f:
+                    data = json.load(f)
+                    latencies[group_name].append(data["latency"])
+                    if data.get("error", None):
+                        corrects[group_name].append(False)
+                    else:
+                        # corrects[group_name].append(data["prediction"] == data["answer"])
+                        corrects[group_name].append(is_equal(data["prediction"], data["answer"]))
+
+    for k, v in latencies.items():
+        print(f"Printing stats for {k}")
+        print(f"Mean latency: {np.mean(v):.2f}")
+        print(f"Avg. correct: {np.mean(corrects[k]):.2f}")
+
+    group_corrects = []
+    for k in 'Overall	Match	Comparison	Ranking	Aggregation	Knowledge	Reasoning'.split('\t'):
+        print(k)
+        if k == 'Overall':
+            correct = np.mean([v for k, vs in corrects.items() for v in vs if k != 'Aggregation'])
+        else:
+            correct = np.mean(corrects[k])
+        group_corrects.append(correct)
+    print('\t'.join([f'{k:.2f}' for k in group_corrects]))
 
 
 class IndexMerger:

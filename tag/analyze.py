@@ -4,6 +4,7 @@ from collections import defaultdict
 
 import numpy as np
 import pandas as pd
+from tag.utils import eval as eval_fixed
 
 
 def eval(args):
@@ -64,4 +65,7 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    eval(args)
+    df = pd.read_csv(args.df_path)
+    output_dir = args.output_dir
+    eval_fixed(df, output_dir)
+    # eval(args)
