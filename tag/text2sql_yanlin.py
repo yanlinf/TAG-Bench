@@ -14,7 +14,7 @@ from tag.utils import row_to_str
 
 ANSWER_GEN_PROMPT = """
 Answer the question based on the SQL execution results.
-- The answer should be in JSON format of either a single string or a list of strings.
+- The answer should be in JSON format of either a single value or a list of values.
 - Output only the answer without additional explanation.
 ---
 SQL: {sql}
@@ -70,6 +70,11 @@ def run_row(query_row):
         messages = [[{"role": "user", "content": prompt}]]
         prediction = lm(messages)[0]
         prediction = prediction.replace('```json', '').replace('```', '').strip()
+
+        if isinstance(answer, list) and not isinstance(prediction, list):
+            prediction = [prediction]
+        elif not isinstance(answer, list) and isinstance(prediction, list):
+            prediction = prediction[0]
 
         try:
             prediction = json.loads(prediction)
