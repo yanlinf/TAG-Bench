@@ -4,7 +4,7 @@ import os
 import re
 import sqlite3
 import time
-
+import traceback
 import pandas as pd
 from collections import defaultdict
 import numpy as np
@@ -70,7 +70,14 @@ def process(query_row, llm_name):
         resp = chain.invoke({"question": question})
         query = resp["query"]
         prediction = resp["result"]
+        print(type(prediction))
+        prediction = json.loads(prediction)
+        prediction = [row[0] for row in prediction]
+        if not isinstance(query_row["Answer"], list) and len(prediction) == 1:
+            prediction = prediction[0]
+        print(prediction)
     except Exception as e:
+        traceback.print_exc()
         error = str(e)
 
     return {
@@ -105,7 +112,7 @@ def main():
         futures = {executor.submit(process, row, args.llm): row for _, row in queries_df.iterrows()}
         for future in as_completed(futures):
             result = future.result()
-            print(result)
+            # print(result)
             all_outputs.append(result)
             if args.output_dir:
                 with open(os.path.join(args.output_dir, f"query_{result['query_id']}.json"), "w") as f:
