@@ -45,7 +45,8 @@ Answer:""".strip()
 
 
 def parse_sql(sql):
-    return sql.replace('```sql', '').replace('```', '').strip()
+    sqls = re.findall(r"```sql\n(.*?)\n```", sql, re.DOTALL)
+    return sqls[-1] if sqls else None
 
 
 def process(query_row, llm_name):
