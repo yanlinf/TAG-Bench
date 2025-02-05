@@ -63,14 +63,14 @@ def process(query_row, llm_name):
     chain = RunnablePassthrough.assign(query=write_query).assign(
         result=itemgetter("query") | execute_query
     )
+    query = None
+    prediction = None
+    error = None
     try:
         resp = chain.invoke({"question": question})
-        prediction = resp["result"]
         query = resp["query"]
-        error = None
+        prediction = resp["result"]
     except Exception as e:
-        query = None
-        prediction = None
         error = str(e)
 
     return {
