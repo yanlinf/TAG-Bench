@@ -5,15 +5,10 @@ import re
 import sqlite3
 import time
 import traceback
+from litellm import completion
 import pandas as pd
 from collections import defaultdict
 import numpy as np
-from operator import itemgetter
-from langchain_openai import ChatOpenAI
-from langchain_community.utilities import SQLDatabase
-from langchain_community.tools import QuerySQLDatabaseTool
-from langchain_core.runnables import RunnablePassthrough
-from langchain.chains import create_sql_query_chain
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import as_completed
 from tag.utils import row_to_str, eval
@@ -44,9 +39,20 @@ Question: {question}
 Answer:""".strip()
 
 
-def parse_sql(sql):
-    sqls = re.findall(r"```sql\n(.*?)\n```", sql, re.DOTALL)
-    return sqls[-1] if sqls else None
+
+
+def get_sqlite_schema(db_path):
+    """Extracts and linearizes the schema of an SQLite database."""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL;")
+    schema_statements = [row[0] for row in cursor.fetchall()]
+
+    conn.close()
+
+    return "\n\n".join(schema_statements)
 
 
 def process(query_row, llm_name):
@@ -55,36 +61,35 @@ def process(query_row, llm_name):
     question = query_row["Query"]
     db_name = query_row["DB used"]
     db_path = f'../dev_folder/dev_databases/{db_name}/{db_name}.sqlite'
-    db = SQLDatabase.from_uri(f"sqlite:///{db_path}")
 
-    llm = ChatOpenAI(model=llm_name, temperature=0.0)
-    write_query = create_sql_query_chain(llm, db) | parse_sql
-    execute_query = QuerySQLDatabaseTool(db=db)
-    chain = RunnablePassthrough.assign(query=write_query).assign(
-        result=itemgetter("query") | execute_query
-    )
-    query = None
-    prediction = None
-    error = None
+    db_schema = get_sqlite_schema(db_path)
+
+    text2sql_prompt = TEXT2SQL_PROMPT.format(db_schema=db_schema, question=question)
+
+    response = completion(
+        model=llm_name,
+        temperature=0.0,
+        messages=[{"role": "user", "content": text2sql_prompt}]
+    ).choices[0].message.content
+    sql = response.replace("```sql", "").replace("```", "").strip()
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    prediction, error = None, None
     try:
-        resp = chain.invoke({"question": question})
-        query = resp["query"]
-        prediction = resp["result"]
-        print(type(prediction))
-        prediction = json.loads(prediction)
-        prediction = [row[0] for row in prediction]
+        cursor.execute(sql)
+        results = cursor.fetchall()
+        prediction = [row[0] for row in results]
         if not isinstance(query_row["Answer"], list) and len(prediction) == 1:
             prediction = prediction[0]
-        print(prediction)
     except Exception as e:
-        traceback.print_exc()
         error = str(e)
 
     return {
         "query_id": query_row["Query ID"],
         "prediction": prediction,
         "answer": query_row["Answer"],
-        "sql_statement": query,
+        "sql_statement": sql,
         "sql_results": None,
         "latency": time.time() - t0,
         "error": error,
@@ -96,6 +101,7 @@ def main():
     parser.add_argument("--df_path", default="../tag_queries.csv", type=str)
     parser.add_argument("--llm", default='gpt-4o', type=str)
     parser.add_argument("--batch_size", default=20, type=int)
+    parser.add_argument("--debug", action="store_true")
     parser.add_argument("--output_dir", default='out_text2sql_agent/', type=str)
     args = parser.parse_args()
     print(args)
@@ -106,6 +112,11 @@ def main():
 
     # for i, row in queries_df.head(1).iterrows():
     #     process(row, args.llm)
+
+    if args.debug:
+        result = process(queries_df.iloc[0], args.llm)
+        print(result)
+        return
 
     all_outputs = []
     with ThreadPoolExecutor() as executor:
