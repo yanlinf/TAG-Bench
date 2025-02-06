@@ -10,27 +10,81 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import as_completed
 from collections import defaultdict
 import numpy as np
+from litellm import batch_completion
 
 from lotus.models import OpenAIModel
 
 from tag.utils import row_to_str, eval
 
+TEXT2SQL_PROMPT = """
+Given the following SQL schema and the provided external knowledge, write a SQL query to answer the question.
+- The SQL should start with `SELECT`.
+- Output only the SQL query without additional explanation.
+-----
+### DB Schema
+{db_schema}
+-----
+Question: {question}
+SQL:""".strip()
+
 ANSWER_GEN_PROMPT = """
 Answer the question based on the SQL execution results.
 - The answer should be in JSON format of either a single value or a list of values.
 - Output only the answer without additional explanation.
----
-SQL: {sql}
+-----
+### SQL
+{sql}
 
-SQL Results: {sql_result}
----
+### SQL Results
+{sql_result}
+-----
 Question: {question}
 Answer:""".strip()
 
 
-def run_row(query_row):
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--df_path", default="../tag_queries.csv", type=str)
+    parser.add_argument("--llm", default='gpt-4o-mini', type=str)
+    parser.add_argument("--batch_size", default=20, type=int)
+    parser.add_argument("--output_dir", default='out_text2sql_yanlin/', type=str)
+    args = parser.parse_args()
+    print(args)
+    print()
+
+    queries_df = pd.read_csv(args.df_path)
+    os.makedirs(args.output_dir, exist_ok=True)
+
     t0 = time.time()
-    text2sql_prompt = query_row["text2sql_prompt"]
+
+    for i in range(0, len(queries_df), args.batch_size):
+        j = min(i + args.batch_size, len(queries_df))
+        text2sql_prompts = []
+        for k in range(i, j):
+            row = queries_df.iloc[k]
+            question = row["Query"]
+            db_schema = row["text2sql_prompt"]
+            assert '-- Using valid SQLite' in db_schema, "Invalid schema"
+            db_schema = db_schema.split('-- Using valid SQLite')[0].strip()
+            text2sql_prompts.append(TEXT2SQL_PROMPT.format(db_schema=db_schema, question=question))
+
+        responses = batch_completion(
+            model=args.llm,
+            messages=[
+                [
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ] for prompt in text2sql_prompts
+            ]
+        )
+        responses = [r.choices[0].message.content for r in responses]
+        sqls = []
+        print()
+        break
+    exit(9)
+
     question = query_row["Query"]
     db_name = query_row["DB used"]
     messages = [[{"role": "user", "content": text2sql_prompt}]]
@@ -101,31 +155,6 @@ def run_row(query_row):
             "latency": time.time() - t0,
         }
 
-
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--df_path", default="../tag_queries.csv", type=str)
-    parser.add_argument("--llm", default='gpt-4o-mini', type=str)
-    parser.add_argument("--output_dir", default='output_text2sql_lm/', type=str)
-    return parser.parse_args()
-
-
-if __name__ == "__main__":
-    args = parse_args()
-    print(args)
-
-    queries_df = pd.read_csv(args.df_path)
-    lm = OpenAIModel(
-        model=args.llm,
-        api_base="https://api.openai.com/v1/",
-        provider="openai",
-        max_tokens=8192,
-        temperature=0.0,
-    )
-
-    if args.output_dir:
-        os.makedirs(args.output_dir, exist_ok=True)
-
     all_outputs = []
     with ThreadPoolExecutor() as executor:
         futures = {executor.submit(run_row, row): row for _, row in queries_df.iterrows()}
@@ -142,3 +171,7 @@ if __name__ == "__main__":
         json.dump(all_outputs, f, indent=2)
 
     eval(queries_df, args.output_dir)
+
+
+if __name__ == "__main__":
+    main()
