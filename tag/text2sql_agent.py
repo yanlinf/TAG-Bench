@@ -17,6 +17,7 @@ AGENT_PROMPT = """Your task is to answer a question using a SQLite database. You
 1. [SQL] Execute a SQL query to retrieve data from the database. The SQL should start with `SELECT`.
 
 2. [ANSWER] Answer the question if there are enough evidence to do so.
+The answer should be concise, and in JSON format of either a single value or a list of values.
 
 Based on the past actions, determine the correct action to take at the current step.
 The output should be in the format `[ACTION] <SQL or Answer>`. Do not include any additional explanation.
@@ -89,7 +90,10 @@ class Text2SQLAgent:
 
             elif action == "ANSWER":
                 trajectory.append(json.dumps({'answer': content}))
-                answer = content
+                try:
+                    answer = json.loads(content)
+                except Exception:
+                    answer = content
                 break
 
         return answer, trajectory
@@ -108,6 +112,9 @@ def process(query_row, llm_name, debug=False):
     agent = Text2SQLAgent(db_path, llm_name, debug=debug)
     prediction, trajectory = agent.query(question)
     agent.close()
+
+    if not isinstance(query_row["Answer"], list) and isinstance(prediction, list) and len(prediction) == 1:
+        prediction = prediction[0]
 
     return {
         "query_id": query_row["Query ID"],
@@ -158,6 +165,9 @@ def main():
 
     eval(queries_df, args.output_dir)
 
+
+    avg_trajectory_length = np.mean([len(output['trajectory']) for output in all_outputs])
+    print(f"Average trajectory length: {avg_trajectory_length:.2f}")
 
 if __name__ == "__main__":
     main()
