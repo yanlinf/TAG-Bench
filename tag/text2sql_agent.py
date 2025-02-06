@@ -35,10 +35,12 @@ Example: `[SQL] SELECT * FROM table_name WHERE column_name = value`
 
 
 class Text2SQLAgent:
-    def __init__(self, sqlite_db_path, llm_name, max_steps: int = 10):
+    def __init__(self, sqlite_db_path, llm_name, max_steps: int = 10, debug: bool = False):
         self.db_path = sqlite_db_path
         self.max_steps = max_steps
         self.llm_name = llm_name
+        self.debug = debug
+
         self.conn = sqlite3.connect(self.db_path)
         self.db_schema = self.get_sqlite_schema()
 
@@ -61,6 +63,12 @@ class Text2SQLAgent:
 
             past_actions = "\n".join(trajectory)
             prompt = AGENT_PROMPT.format(db_schema=self.db_schema, past_actions=past_actions, question=question)
+
+            if self.debug:
+                print()
+                print()
+                print(prompt)
+
             response = completion(
                 model=self.llm_name,
                 temperature=0.0,
@@ -80,7 +88,9 @@ class Text2SQLAgent:
                     trajectory.append(json.dumps({'sql': content, 'error': str(e)}))
 
             elif action == "ANSWER":
+                trajectory.append(json.dumps({'answer': content}))
                 answer = content
+                break
 
         return answer, trajectory
 
@@ -88,14 +98,14 @@ class Text2SQLAgent:
         self.conn.close()
 
 
-def process(query_row, llm_name):
+def process(query_row, llm_name, debug=False):
     t0 = time.time()
 
     question = query_row["Query"]
     db_name = query_row["DB used"]
     db_path = f'../dev_folder/dev_databases/{db_name}/{db_name}.sqlite'
 
-    agent = Text2SQLAgent(db_path, llm_name)
+    agent = Text2SQLAgent(db_path, llm_name, debug=debug)
     prediction, trajectory = agent.query(question)
     agent.close()
 
@@ -127,13 +137,13 @@ def main():
     #     process(row, args.llm)
 
     if args.debug:
-        result = process(queries_df.iloc[0], args.llm)
+        result = process(queries_df.iloc[0], args.llm, args.debug)
         print(result)
         return
 
     all_outputs = []
     with ThreadPoolExecutor() as executor:
-        futures = {executor.submit(process, row, args.llm): row for _, row in queries_df.iterrows()}
+        futures = {executor.submit(process, row, args.llm, args.debug): row for _, row in queries_df.iterrows()}
         for future in as_completed(futures):
             result = future.result()
             # print(result)
