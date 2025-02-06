@@ -5,6 +5,7 @@ import re
 import sqlite3
 import time
 import traceback
+import litellm
 from litellm import completion
 import pandas as pd
 from collections import defaultdict
@@ -13,15 +14,22 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import as_completed
 from tag.utils import row_to_str, eval
 
+# litellm.set_verbose = True
+
+# - Do not try to solve the question in one step. Break it down into smaller steps for better accuracy.
+#   For example, if the question is asking for counties in Bay Area, you can run a SQL to get all unique counties in the database first, instead of relying on your own knowledge of what counties are in Bay Area.
+#   Hint: cname refers to the name of the county.
+
 AGENT_PROMPT = """Your task is to answer a question using a SQLite database. You are allowed to perform the following actions:
 1. [SQL] Execute a SQL query to retrieve data from the database. The SQL should start with `SELECT`.
 
 2. [ANSWER] Answer the question if there are enough evidence to do so.
 The answer should be concise, and in JSON format of either a single value or a list of values.
 
-Based on the past actions, determine the correct action to take at the current step.
-The output should be in the format `[ACTION] <SQL or Answer>`. Do not include any additional explanation.
-Example: `[SQL] SELECT * FROM table_name WHERE column_name = value`
+Based on the past actions, determine the correct action to take at the current step. 
+- The output should be in the format `[ACTION] <SQL or Answer>`. Do not include any additional explanation. 
+  Example: `[SQL] SELECT * FROM table_name WHERE column_name = value`
+
 -----
 ### SQLite DB Schema
 {db_schema}
@@ -165,9 +173,9 @@ def main():
 
     eval(queries_df, args.output_dir)
 
-
     avg_trajectory_length = np.mean([len(output['trajectory']) for output in all_outputs])
     print(f"Average trajectory length: {avg_trajectory_length:.2f}")
+
 
 if __name__ == "__main__":
     main()
