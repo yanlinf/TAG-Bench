@@ -87,6 +87,7 @@ def process(query_row, llm_name):
 
     return {
         "query_id": query_row["Query ID"],
+        "question": question,
         "prediction": prediction,
         "answer": query_row["Answer"],
         "sql_statement": sql,
