@@ -13,46 +13,79 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import as_completed
 from tag.utils import row_to_str, eval
 
-TEXT2SQL_PROMPT = """
-Given the following SQL schema and the provided external knowledge, write a SQL query to answer the question.
-- The SQL should start with `SELECT`.
-- Output only the SQL query without additional explanation.
+AGENT_PROMPT = """Your task is to answer a question using a SQLite database. You are allowed to perform the following actions:
+1. [SQL] Execute a SQL query to retrieve data from the database. The SQL should start with `SELECT`.
+
+2. [ANSWER] Answer the question if there are enough evidence to do so.
+
+Based on the past actions, determine the correct action to take at the current step.
+The output should be in the format `[ACTION] <SQL or Answer>`. Do not include any additional explanation.
+Example: `[SQL] SELECT * FROM table_name WHERE column_name = value`
 -----
-### DB Schema
+### SQLite DB Schema
 {db_schema}
------
-Question: {question}
-SQL:""".strip()
 
-ANSWER_GEN_PROMPT = """
-Answer the question based on the SQL execution results.
-- The answer should be in JSON format of either a single value or a list of values.
-- Output only the answer without additional explanation.
------
-### SQL
-{sql}
+### Past actions
+{past_actions}
 
-### SQL Results
-{sql_result}
------
-Question: {question}
-Answer:""".strip()
+### Question: {question}
+
+### Action to take:
+"""
 
 
+class Text2SQLAgent:
+    def __init__(self, sqlite_db_path, llm_name, max_steps: int = 10):
+        self.db_path = sqlite_db_path
+        self.max_steps = max_steps
+        self.llm_name = llm_name
+        self.conn = sqlite3.connect(self.db_path)
+        self.db_schema = self.get_sqlite_schema()
 
+    def get_sqlite_schema(self) -> str:
+        """Extracts and linearizes the schema of an SQLite database."""
+        cursor = self.conn.cursor()
 
-def get_sqlite_schema(db_path):
-    """Extracts and linearizes the schema of an SQLite database."""
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+        cursor.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL;")
+        schema_statements = [row[0] for row in cursor.fetchall()]
 
-    cursor.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL;")
-    schema_statements = [row[0] for row in cursor.fetchall()]
+        return "\n\n".join(schema_statements)
 
-    conn.close()
+    def query(self, question: str):
+        trajectory = []
+        answer = None
+        while True:
+            if len(trajectory) >= self.max_steps:
+                break
 
-    return "\n\n".join(schema_statements)
+            past_actions = "\n".join(trajectory)
+            prompt = AGENT_PROMPT.format(db_schema=self.db_schema, past_actions=past_actions, question=question)
+            response = completion(
+                model=self.llm_name,
+                temperature=0.0,
+                messages=[{"role": "system", "content": prompt}]
+            ).choices[0].message.content
+
+            action, content = response.split(" ", 1)
+            action = action[1:-1]
+
+            if action == "SQL":
+                try:
+                    cursor = self.conn.cursor()
+                    cursor.execute(content)
+                    results = cursor.fetchall()
+                    trajectory.append(json.dumps({'sql': content, 'results': results}))
+                except Exception as e:
+                    trajectory.append(json.dumps({'sql': content, 'error': str(e)}))
+
+            elif action == "ANSWER":
+                answer = content
+
+        return answer, trajectory
+
+    def close(self):
+        self.conn.close()
 
 
 def process(query_row, llm_name):
@@ -62,38 +95,17 @@ def process(query_row, llm_name):
     db_name = query_row["DB used"]
     db_path = f'../dev_folder/dev_databases/{db_name}/{db_name}.sqlite'
 
-    db_schema = get_sqlite_schema(db_path)
-
-    text2sql_prompt = TEXT2SQL_PROMPT.format(db_schema=db_schema, question=question)
-
-    response = completion(
-        model=llm_name,
-        temperature=0.0,
-        messages=[{"role": "user", "content": text2sql_prompt}]
-    ).choices[0].message.content
-    sql = response.replace("```sql", "").replace("```", "").strip()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    prediction, error = None, None
-    try:
-        cursor.execute(sql)
-        results = cursor.fetchall()
-        prediction = [row[0] for row in results]
-        if not isinstance(query_row["Answer"], list) and len(prediction) == 1:
-            prediction = prediction[0]
-    except Exception as e:
-        error = str(e)
+    agent = Text2SQLAgent(db_path, llm_name)
+    prediction, trajectory = agent.query(question)
+    agent.close()
 
     return {
         "query_id": query_row["Query ID"],
         "question": question,
         "prediction": prediction,
         "answer": query_row["Answer"],
-        "sql_statement": sql,
-        "sql_results": None,
-        "latency": time.time() - t0,
-        "error": error,
+        "trajectory": trajectory,
+        "latency": time.time() - t0
     }
 
 
