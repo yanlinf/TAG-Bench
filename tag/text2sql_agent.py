@@ -6,6 +6,7 @@ import sqlite3
 import time
 import traceback
 import litellm
+import random
 from litellm import completion
 import pandas as pd
 from collections import defaultdict
@@ -27,6 +28,7 @@ AGENT_PROMPT = """Your task is to answer a question using a SQLite database. You
 The answer should be concise, and in JSON format of either a single value or a list of values.
 
 Based on the past actions, determine the correct action to take at the current step. 
+- Do not perform counting over a large number of rows. Use SQL queries to perform the counting.
 - The output should be in the format `[ACTION] <SQL or Answer>`. Do not include any additional explanation. 
   Example: `[SQL] SELECT * FROM table_name WHERE column_name = value`
 
@@ -51,7 +53,8 @@ class Text2SQLAgent:
         self.debug = debug
 
         self.conn = sqlite3.connect(self.db_path)
-        self.db_schema = self.get_sqlite_schema()
+        # self.db_schema = self.get_sqlite_schema()
+        self.db_schema = self.get_enriched_sqlite_schema()
 
     def get_sqlite_schema(self) -> str:
         """Extracts and linearizes the schema of an SQLite database."""
@@ -62,6 +65,46 @@ class Text2SQLAgent:
         schema_statements = [row[0] for row in cursor.fetchall()]
 
         return "\n\n".join(schema_statements)
+
+    def get_enriched_sqlite_schema(self) -> str:
+        """Extracts and enriches the schema of an SQLite database with sample values."""
+        cursor = self.conn.cursor()
+
+        # Fetch table schemas
+        cursor.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL;"
+        )
+        tables = cursor.fetchall()
+        enriched_schemas = []
+
+        for table_name, schema in tables:
+            enriched_schema = [schema]  # Start with the original schema
+
+            try:
+                # Fetch column names using SELECT * LIMIT 5
+                cursor.execute(f"SELECT * FROM {table_name} LIMIT 5;")
+                columns = [description[0] for description in cursor.description]
+            except sqlite3.OperationalError as e:
+                enriched_schema.append(f"-- Error accessing table {table_name}: {e}")
+                enriched_schemas.append("\n".join(enriched_schema))
+                continue
+
+            for column in columns:
+                try:
+                    cursor.execute(f"SELECT DISTINCT {column} FROM {table_name} LIMIT 11;")
+                    values = [row[0] for row in cursor.fetchall()]
+
+                    if len(values) > 10:
+                        sample_values = random.sample(values, 3) if len(values) > 3 else values
+                        enriched_schema.append(f"-- Column {column}: Sample values: {sample_values}")
+                    else:
+                        enriched_schema.append(f"-- Column {column}: Unique values: {values}")
+                except sqlite3.OperationalError as e:
+                    enriched_schema.append(f"-- Error accessing column {column} in table {table_name}: {e}")
+
+            enriched_schemas.append("\n".join(enriched_schema))
+
+        return "\n\n".join(enriched_schemas)
 
     def query(self, question: str):
         trajectory = []
